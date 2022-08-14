@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import os
 import platform
@@ -122,7 +122,7 @@ def main():
     args = parser.parse_args()
 
     os.system("cp Cargo.toml Cargo.toml.bk")
-    os.system("cp src/main.rs src/main.rs.bk")
+    os.system("cp ./src/main.rs ./src/main.rs.bk")
     if windows:
         txt = open('src/main.rs', encoding='utf8').read()
         with open('src/main.rs', 'wt', encoding='utf8') as fh:
@@ -130,7 +130,7 @@ def main():
                 '//#![windows_subsystem', '#![windows_subsystem'))
     if os.path.exists(exe_path):
         os.unlink(exe_path)
-    os.system('python3 inline-sciter.py')
+    os.system('python inline-sciter.py')
     if os.path.isfile('/usr/bin/pacman'):
         os.system('git checkout src/ui/common.tis')
     version = get_version()
@@ -171,6 +171,7 @@ def main():
         os.system('mv $HOME/rpmbuild/RPMS/x86_64/rustdesk-%s-0.x86_64.rpm ./rustdesk-%s-suse.rpm' % (version, version))
         # yum localinstall rustdesk.rpm
     else:
+        print('其他模式')
         os.system('cargo bundle --release --features ' + features)
         if osx:
             os.system(

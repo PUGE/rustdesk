@@ -91,7 +91,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           0,
           SettingsTile.switchTile(
               initialValue: _ignoreBatteryOpt,
-              title: Text(translate('Keep RustDesk background service')),
+              title: Text(translate('Keep RCNServer background service')),
               description:
                   Text('* ${translate('Ignore Battery Optimizations')}'),
               onToggle: (v) async {
@@ -230,7 +230,7 @@ void showLanguageSettings() {
 void showAbout() {
   DialogManager.show((setState, close) {
     return CustomAlertDialog(
-      title: Text(translate('About') + ' RustDesk'),
+      title: Text(translate('About') + ' RCNServer'),
       content: Wrap(direction: Axis.vertical, spacing: 12, children: [
         Text('Version: $version'),
         InkWell(

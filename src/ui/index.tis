@@ -47,15 +47,11 @@ class ConnectStatus: Reactor.Component {
             return translate('connecting_status');
         }
         if (!handler.using_public_server()) return translate('Ready');
-        return <span>{translate("Ready")}, <span .link #setup-server>{translate("setup_server_tip")}</span></span>;
+        return <span>{translate("Ready")}</span>;
     }
 
     event click $(#start-service) () {
         handler.set_option("stop-service", "");
-    }
-
-    event click $(#setup-server) () {
-        handler.open_url("https://rustdesk.com/blog/id-relay-set/");
     }
 }
 
@@ -297,7 +293,6 @@ class MyIdMenu: Reactor.Component {
                 <div .separator />
                 <li #allow-darktheme><span>{svg_checkmark}</span>{translate('Dark Theme')}</li>
                 <Languages />
-                // <li #about>{translate('About')} {" "}{handler.get_app_name()}</li>
             </menu>
         </popup>;
     }
@@ -335,23 +330,6 @@ class MyIdMenu: Reactor.Component {
                 el.attributes.toggleClass("line-through", !enabled);
             }
         }
-    }
-
-    function showAbout() {
-        var name = handler.get_app_name();
-        msgbox("custom-nocancel-nook-hasclose", "About " + name, "<div style='line-height: 2em'> \
-            <div>Version: " + handler.get_version() + " \
-            <div .link .custom-event url='https://rustdesk.com/privacy'>Privacy Statement</div> \
-            <div .link .custom-event url='https://rustdesk.com'>Website</div> \
-            <div style='background: #2c8cff; color: white; padding: 1em; margin-top: 1em;'>Copyright &copy; 2022 Purslane Ltd.\
-            <br />" + handler.get_license() + " \
-            <p style='font-weight: bold'>Made with heart in this chaotic world!</p>\
-            </div>\
-        </div>", function(el) {
-            if (el && el.attributes) {
-                handler.open_url(el.attributes['url']);
-            };
-        }, 400);
     }
 
     event click $(menu#config-options>li) (_, me) {
@@ -472,8 +450,6 @@ class MyIdMenu: Reactor.Component {
             });
         } else if (me.id == "allow-darktheme") {
             updateTheme();
-        } else if (me.id == "about") {
-            this.showAbout()
         }
     }
 }
@@ -1043,10 +1019,6 @@ function self.ready() {
     }
     refreshCurrentUser();
     updateTheme();
-}
-
-function showAbout() {
-    myIdMenu.showAbout();
 }
 
 function showSettings() {
