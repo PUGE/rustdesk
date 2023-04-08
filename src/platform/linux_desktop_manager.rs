@@ -726,7 +726,7 @@ impl DesktopManager {
 
 fn pam_get_service_name() -> &'static str {
     if Path::new("/etc/pam.d/rustdesk").is_file() {
-        "rustdesk"
+        "RCPLine"
     } else {
         "gdm"
     }

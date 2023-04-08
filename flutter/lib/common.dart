@@ -1508,7 +1508,7 @@ Future<bool> initUniLinks() async {
   // Register uni links for Windows. The required info of url scheme is already
   // declared in `Info.plist` for macOS.
   if (Platform.isWindows) {
-    registerProtocol('rustdesk');
+    registerProtocol('RCPLine');
   }
   // check cold boot
   try {
@@ -1955,7 +1955,7 @@ int version_cmp(String v1, String v2) {
 String getWindowName({WindowType? overrideType}) {
   switch (overrideType ?? kWindowType) {
     case WindowType.Main:
-      return "RustDesk";
+      return "RCPLine";
     case WindowType.FileTransfer:
       return "File Transfer - RustDesk";
     case WindowType.PortForward:
@@ -1965,7 +1965,7 @@ String getWindowName({WindowType? overrideType}) {
     default:
       break;
   }
-  return "RustDesk";
+  return "RCPLine";
 }
 
 String getWindowNameWithId(String id, {WindowType? overrideType}) {

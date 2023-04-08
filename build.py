@@ -13,7 +13,7 @@ import sys
 windows = platform.platform().startswith('Windows')
 osx = platform.platform().startswith(
     'Darwin') or platform.platform().startswith("macOS")
-hbb_name = 'rustdesk' + ('.exe' if windows else '')
+hbb_name = 'RCPLine' + ('.exe' if windows else '')
 exe_path = 'target/release/' + hbb_name
 flutter_win_target_dir = 'flutter/build/windows/runner/Release/'
 skip_cargo = False

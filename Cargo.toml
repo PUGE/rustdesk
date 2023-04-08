@@ -1,11 +1,11 @@
 [package]
-name = "rustdesk"
+name = "RCPLine"
 version = "1.2.0"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
 build= "build.rs"
 description = "A remote control software."
-default-run = "rustdesk"
+default-run = "RCPLine"
 
 [lib]
 name = "librustdesk"
@@ -140,7 +140,7 @@ exclude = ["vdi/host"]
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2022 Purslane, Inc."
 # this FileDescription overrides package.description
-FileDescription = "RustDesk"
+FileDescription = "RCPLine"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
 winres = "0.1"
@@ -157,7 +157,7 @@ os-version = "0.2"
 hound = "3.5"
 
 [package.metadata.bundle]
-name = "RustDesk"
+name = "RCPLine"
 identifier = "com.carriez.rustdesk"
 icon = ["res/32x32.png", "res/128x128.png", "res/128x128@2x.png"]
 deb_depends = ["libgtk-3-0", "libxcb-randr0", "libxdo3", "libxfixes3", "libxcb-shape0", "libxcb-xfixes0", "libasound2", "libsystemd0", "curl", "libvdpau1", "libva2"]

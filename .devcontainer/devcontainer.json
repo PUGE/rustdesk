@@ -1,5 +1,5 @@
 {
-    "name": "rustdesk",
+    "name": "RCPLine",
     "build": {
         "dockerfile": "./Dockerfile",
         "context": "."

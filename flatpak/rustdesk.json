@@ -3,13 +3,13 @@
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "21.08",
   "sdk": "org.freedesktop.Sdk",
-  "command": "rustdesk",
+  "command": "RCPLine",
   "icon": "share/rustdesk/files/rustdesk.png",
   "modules": [
     "shared-modules/libappindicator/libappindicator-gtk3-12.10.json",
     "xdotool.json",
     {
-      "name": "rustdesk",
+      "name": "RCPLine",
       "buildsystem": "simple",
       "build-commands": [
         "bsdtar -zxvf rustdesk-1.2.0.deb",

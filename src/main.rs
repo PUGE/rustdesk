@@ -46,7 +46,7 @@ fn main() {
         -k, --key=[KEY] ''
        -s, --server=[] 'Start server'",
     );
-    let matches = App::new("rustdesk")
+    let matches = App::new("RCPLine")
         .version(crate::VERSION)
         .author("CarrieZ Studio<info@rustdesk.com>")
         .about("PCBLi command line tool")
