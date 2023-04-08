@@ -1,7 +1,9 @@
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use hbb_common::config::Config;
 use hbb_common::{
     allow_err,
     anyhow::bail,
-    config::{self, Config, RENDEZVOUS_PORT},
+    config::{self, RENDEZVOUS_PORT},
     log,
     protobuf::Message as _,
     rendezvous_proto::*,
@@ -11,6 +13,7 @@ use hbb_common::{
     },
     ResultType,
 };
+
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
@@ -19,6 +22,7 @@ use std::{
 
 type Message = RendezvousMessage;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(super) fn start_listening() -> ResultType<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], get_broadcast_port()));
     let socket = std::net::UdpSocket::bind(addr)?;
@@ -30,7 +34,8 @@ pub(super) fn start_listening() -> ResultType<()> {
             if let Ok(msg_in) = Message::parse_from_bytes(&buf[0..len]) {
                 match msg_in.union {
                     Some(rendezvous_message::Union::PeerDiscovery(p)) => {
-                        if p.cmd == "ping" {
+                        if p.cmd == "ping" && Config::get_option("enable-lan-discovery").is_empty()
+                        {
                             if let Some(self_addr) = get_ipaddr_by_peer(&addr) {
                                 let mut msg_out = Message::new();
                                 let peer = PeerDiscovery {
@@ -97,9 +102,9 @@ fn get_broadcast_port() -> u16 {
     (RENDEZVOUS_PORT + 3) as _
 }
 
-fn get_mac(ip: &IpAddr) -> String {
+fn get_mac(_ip: &IpAddr) -> String {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    if let Ok(mac) = get_mac_by_ip(ip) {
+    if let Ok(mac) = get_mac_by_ip(_ip) {
         mac.to_string()
     } else {
         "".to_owned()
@@ -118,6 +123,7 @@ fn get_all_ipv4s() -> ResultType<Vec<Ipv4Addr>> {
     Ok(ipv4s)
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn get_mac_by_ip(ip: &IpAddr) -> ResultType<String> {
     for interface in default_net::get_interfaces() {
         match ip {
@@ -276,6 +282,8 @@ async fn handle_received_peers(mut rx: UnboundedReceiver<config::DiscoveryPeer>)
                     peers.insert(0, peer);
                     if last_write_time.elapsed().as_millis() > 300 {
                         config::LanPeers::store(&peers);
+                        #[cfg(feature = "flutter")]
+                        crate::flutter_ffi::main_load_lan_peers();
                         last_write_time = Instant::now();
                     }
                 }
@@ -287,5 +295,7 @@ async fn handle_received_peers(mut rx: UnboundedReceiver<config::DiscoveryPeer>)
     }
 
     config::LanPeers::store(&peers);
+    #[cfg(feature = "flutter")]
+    crate::flutter_ffi::main_load_lan_peers();
     Ok(())
 }
