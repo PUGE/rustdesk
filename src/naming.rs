@@ -11,16 +11,17 @@ fn gen_name(lic: &License) -> ResultType<String> {
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let api = args.get(2).cloned().unwrap_or_default();
+    let relay = args.get(3).cloned().unwrap_or_default();
     if args.len() >= 2 {
-        println!(
-            "rustdesk-licensed-{}.exe",
-            gen_name(&License {
-                key: args[0].clone(),
-                host: args[1].clone(),
-                api,
-            })
-            .unwrap()
-        );
+        match gen_name(&License {
+            key: args[0].clone(),
+            host: args[1].clone(),
+            api,
+            relay,
+        }) {
+            Ok(name) => println!("rustdesk-licensed-{}.exe", name),
+            Err(e) => println!("{:?}", e),
+        }
     }
     if args.len() == 1 {
         println!("{:?}", get_license_from_string(&args[0]));

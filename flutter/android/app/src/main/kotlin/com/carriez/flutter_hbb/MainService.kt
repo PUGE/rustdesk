@@ -44,8 +44,7 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-
-const val DEFAULT_NOTIFY_TITLE = "RCPLine"
+const val DEFAULT_NOTIFY_TITLE = "RustDesk"
 const val DEFAULT_NOTIFY_TEXT = "Service is running"
 const val DEFAULT_NOTIFY_ID = 1
 const val NOTIFY_ID_OFFSET = 100
@@ -66,23 +65,38 @@ const val AUDIO_CHANNEL_MASK = AudioFormat.CHANNEL_IN_STEREO
 class MainService : Service() {
 
     init {
-        System.loadLibrary("RCPLine")
+        System.loadLibrary("rustdesk")
     }
 
     @Keep
     @RequiresApi(Build.VERSION_CODES.N)
-    fun rustMouseInput(mask: Int, x: Int, y: Int) {
+    fun rustPointerInput(kind: String, mask: Int, x: Int, y: Int) {
         // turn on screen with LIFT_DOWN when screen off
-        if (!powerManager.isInteractive && mask == LIFT_DOWN) {
+        if (!powerManager.isInteractive && (kind == "touch" || mask == LIFT_DOWN)) {
             if (wakeLock.isHeld) {
-                Log.d(logTag,"Turn on Screen, WakeLock release")
+                Log.d(logTag, "Turn on Screen, WakeLock release")
                 wakeLock.release()
             }
             Log.d(logTag,"Turn on Screen")
             wakeLock.acquire(5000)
         } else {
-            InputService.ctx?.onMouseInput(mask,x,y)
+            when (kind) {
+                "touch" -> {
+                    InputService.ctx?.onTouchInput(mask, x, y)
+                }
+                "mouse" -> {
+                    InputService.ctx?.onMouseInput(mask, x, y)
+                }
+                else -> {
+                }
+            }
         }
+    }
+
+    @Keep
+    @RequiresApi(Build.VERSION_CODES.N)
+    fun rustKeyEventInput(input: ByteArray) {
+        InputService.ctx?.onKeyEvent(input)
     }
 
     @Keep
@@ -197,6 +211,7 @@ class MainService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(logTag,"MainService onCreate")
+        init(this)
         HandlerThread("Service", Process.THREAD_PRIORITY_BACKGROUND).apply {
             start()
             serviceLooper = looper
@@ -301,7 +316,6 @@ class MainService : Service() {
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
                 checkMediaPermission()
-                init(this)
                 _isReady = true
             } ?: let {
                 Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
@@ -384,6 +398,7 @@ class MainService : Service() {
         return true
     }
 
+    @Synchronized
     fun stopCapture() {
         Log.d(logTag, "Stop Capture")
         setFrameRawEnable("video",false)
@@ -585,7 +600,7 @@ class MainService : Service() {
     private fun initNotification() {
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationChannel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "RCPLine"
+            val channelId = "RustDesk"
             val channelName = "RustDesk Service"
             val channel = NotificationChannel(
                 channelId,

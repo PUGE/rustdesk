@@ -38,7 +38,7 @@ impl BinaryData {
         let cursor = Cursor::new(self.raw);
         let mut decoder = brotli::Decompressor::new(cursor, BUF_SIZE);
         let mut buf = Vec::new();
-        decoder.read_to_end(&mut buf).unwrap();
+        decoder.read_to_end(&mut buf).ok();
         buf
     }
 
@@ -51,7 +51,7 @@ impl BinaryData {
         }
         if p.exists() {
             // check md5
-            let f = fs::read(p.clone()).unwrap();
+            let f = fs::read(p.clone()).unwrap_or_default();
             let digest = format!("{:x}", md5::compute(&f));
             let md5_record = String::from_utf8_lossy(self.md5_code);
             if digest == md5_record {
@@ -73,13 +73,13 @@ impl BinaryReader {
         let mut parsed = vec![];
         assert!(BIN_DATA.len() > IDENTIFIER_LENGTH, "bin data invalid!");
         let mut iden = String::from_utf8_lossy(&BIN_DATA[base..base + IDENTIFIER_LENGTH]);
-        if iden != "RCPLine" {
+        if iden != "rustdesk" {
             panic!("bin file is not valid!");
         }
         base += IDENTIFIER_LENGTH;
         loop {
             iden = String::from_utf8_lossy(&BIN_DATA[base..base + IDENTIFIER_LENGTH]);
-            if iden == "RCPLine" {
+            if iden == "rustdesk" {
                 base += IDENTIFIER_LENGTH;
                 break;
             }
@@ -127,11 +127,13 @@ impl BinaryReader {
 
         let exe_path = prefix.join(&self.exe);
         if exe_path.exists() {
-            let f = File::open(exe_path).unwrap();
-            let meta = f.metadata().unwrap();
-            let mut permissions = meta.permissions();
-            permissions.set_mode(0o755);
-            f.set_permissions(permissions).unwrap();
+            if let Ok(f) = File::open(exe_path) {
+                if let Ok(meta) = f.metadata() {
+                    let mut permissions = meta.permissions();
+                    permissions.set_mode(0o755);
+                    f.set_permissions(permissions).ok();
+                }
+            }
         }
     }
 }

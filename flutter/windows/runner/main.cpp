@@ -22,21 +22,21 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   HINSTANCE hInstance = LoadLibraryA("librustdesk.dll");
   if (!hInstance)
   {
-    std::cout << "Failed to load librustdesk.dll" << std::endl;
+    std::cout << "Failed to load librustdesk.dll." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_CORE_MAIN rustdesk_core_main =
       (FUNC_RUSTDESK_CORE_MAIN)GetProcAddress(hInstance, "rustdesk_core_main_args");
   if (!rustdesk_core_main)
   {
-    std::cout << "Failed to get rustdesk_core_main" << std::endl;
+    std::cout << "Failed to get rustdesk_core_main." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_FREE_ARGS free_c_args =
       (FUNC_RUSTDESK_FREE_ARGS)GetProcAddress(hInstance, "free_c_args");
   if (!free_c_args)
   {
-    std::cout << "Failed to get free_c_args" << std::endl;
+    std::cout << "Failed to get free_c_args." << std::endl;
     return EXIT_FAILURE;
   }
   std::vector<std::string> command_line_arguments =
@@ -50,14 +50,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   char** c_args = rustdesk_core_main(&args_len);
   if (!c_args)
   {
-    std::cout << "Rustdesk core returns false, exiting without launching Flutter app" << std::endl;
+    std::string args_str = "";
+    for (const auto& argument : command_line_arguments) {
+      args_str += (argument + " ");
+    }
+    // std::cout << "RustDesk [" << args_str << "], core returns false, exiting without launching Flutter app." << std::endl;
     return EXIT_SUCCESS;
   }
   std::vector<std::string> rust_args(c_args, c_args + args_len);
   free_c_args(c_args, args_len);
 
   // Uri links dispatch
-  HWND hwnd = ::FindWindow(_T("FLUTTER_RUNNER_WIN32_WINDOW"), _T("RCPLine"));
+  HWND hwnd = ::FindWindow(_T("FLUTTER_RUNNER_WIN32_WINDOW"), _T("RustDesk"));
   if (hwnd != NULL) {
     // Allow multiple flutter instances when being executed by parameters
     // contained in whitelists.
@@ -108,7 +112,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(800, 600);
   if (!window.CreateAndShow(
-          is_cm_page ? L"RustDesk - Connection Manager" : L"RCPLine", origin,
+          is_cm_page ? L"RustDesk - Connection Manager" : L"RustDesk", origin,
           size, !is_cm_page)) {
       return EXIT_FAILURE;
   }

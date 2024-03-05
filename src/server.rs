@@ -10,10 +10,10 @@ use bytes::Bytes;
 pub use connection::*;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::config::Config2;
-use hbb_common::tcp::new_listener;
+use hbb_common::tcp::{self, new_listener};
 use hbb_common::{
     allow_err,
-    anyhow::{anyhow, Context},
+    anyhow::Context,
     bail,
     config::{Config, CONNECT_TIMEOUT, RELAY_PORT},
     log,
@@ -21,12 +21,12 @@ use hbb_common::{
     protobuf::{Enum, Message as _},
     rendezvous_proto::*,
     socket_client,
-    sodiumoxide::crypto::{box_, secretbox, sign},
+    sodiumoxide::crypto::{box_, sign},
     timeout, tokio, ResultType, Stream,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use service::ServiceTmpl;
-use service::{GenericService, Service, Subscriber};
+use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 
 use crate::ipc::Data;
 
@@ -38,6 +38,8 @@ mod clipboard_service;
 pub(crate) mod wayland;
 #[cfg(target_os = "linux")]
 pub mod uinput;
+#[cfg(target_os = "linux")]
+pub mod rdp_input;
 #[cfg(target_os = "linux")]
 pub mod dbus;
 pub mod input_service;
@@ -53,6 +55,7 @@ pub const NAME_POS: &'static str = "";
 }
 
 mod connection;
+pub mod display_service;
 #[cfg(windows)]
 pub mod portable_service;
 mod service;
@@ -62,6 +65,9 @@ pub mod video_service;
 pub type Childs = Arc<Mutex<Vec<std::process::Child>>>;
 type ConnMap = HashMap<i32, ConnInner>;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const CONFIG_SYNC_INTERVAL_SECS: f32 = 0.3;
+
 lazy_static::lazy_static! {
     pub static ref CHILD_PROCESS: Childs = Default::default();
     pub static ref CONN_COUNT: Arc<Mutex<usize>> = Default::default();
@@ -69,6 +75,7 @@ lazy_static::lazy_static! {
     // for all initiative connections.
     //
     // [Note]
+    // ugly
     // Now we use this [`CLIENT_SERVER`] to do following operations:
     // - record local audio, and send to remote
     pub static ref CLIENT_SERVER: ServerPtr = new();
@@ -76,7 +83,7 @@ lazy_static::lazy_static! {
 
 pub struct Server {
     connections: ConnMap,
-    services: HashMap<&'static str, Box<dyn Service>>,
+    services: HashMap<String, Box<dyn Service>>,
     id_count: i32,
 }
 
@@ -87,14 +94,15 @@ pub fn new() -> ServerPtr {
     let mut server = Server {
         connections: HashMap::new(),
         services: HashMap::new(),
-        id_count: 0,
+        id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
-    server.add_service(Box::new(video_service::new()));
+    #[cfg(not(target_os = "ios"))]
+    server.add_service(Box::new(display_service::new()));
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         server.add_service(Box::new(clipboard_service::new()));
-        if !video_service::capture_cursor_embedded() {
+        if !display_service::capture_cursor_embedded() {
             server.add_service(Box::new(input_service::new_cursor()));
             server.add_service(Box::new(input_service::new_pos()));
         }
@@ -118,15 +126,6 @@ async fn accept_connection_(server: ServerPtr, socket: Stream, secure: bool) -> 
     Ok(())
 }
 
-async fn check_privacy_mode_on(stream: &mut Stream) -> ResultType<()> {
-    if video_service::get_privacy_mode_conn_id() > 0 {
-        let msg_out =
-            crate::common::make_privacy_mode_msg(back_notification::PrivacyModeState::PrvOnByOther);
-        timeout(CONNECT_TIMEOUT, stream.send(&msg_out)).await??;
-    }
-    Ok(())
-}
-
 pub async fn create_tcp_connection(
     server: ServerPtr,
     stream: Stream,
@@ -134,13 +133,7 @@ pub async fn create_tcp_connection(
     secure: bool,
 ) -> ResultType<()> {
     let mut stream = stream;
-    check_privacy_mode_on(&mut stream).await?;
-
-    let id = {
-        let mut w = server.write().unwrap();
-        w.id_count += 1;
-        w.id_count
-    };
+    let id = server.write().unwrap().get_new_id();
     let (sk, pk) = Config::get_key_pair();
     if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
         let mut sk_ = [0u8; sign::SECRETKEYBYTES];
@@ -169,21 +162,11 @@ pub async fn create_tcp_connection(
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::PublicKey(pk)) = msg_in.union {
                         if pk.asymmetric_value.len() == box_::PUBLICKEYBYTES {
-                            let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
-                            let mut pk_ = [0u8; box_::PUBLICKEYBYTES];
-                            pk_[..].copy_from_slice(&pk.asymmetric_value);
-                            let their_pk_b = box_::PublicKey(pk_);
-                            let symmetric_key =
-                                box_::open(&pk.symmetric_value, &nonce, &their_pk_b, &our_sk_b)
-                                    .map_err(|_| {
-                                        anyhow!("Handshake failed: box decryption failure")
-                                    })?;
-                            if symmetric_key.len() != secretbox::KEYBYTES {
-                                bail!("Handshake failed: invalid secret key length from peer");
-                            }
-                            let mut key = [0u8; secretbox::KEYBYTES];
-                            key[..].copy_from_slice(&symmetric_key);
-                            stream.set_key(secretbox::Key(key));
+                            stream.set_key(tcp::Encrypt::decode(
+                                &pk.symmetric_value,
+                                &pk.asymmetric_value,
+                                &our_sk_b,
+                            )?);
                         } else if pk.asymmetric_value.is_empty() {
                             Config::set_key_confirmed(false);
                             log::info!("Force to update pk");
@@ -274,9 +257,29 @@ async fn create_relay_connection_(
 }
 
 impl Server {
+    fn is_video_service_name(name: &str) -> bool {
+        name.starts_with(video_service::NAME)
+    }
+
+    pub fn try_add_primay_video_service(&mut self) {
+        let primary_video_service_name =
+            video_service::get_service_name(*display_service::PRIMARY_DISPLAY_IDX);
+        if !self.contains(&primary_video_service_name) {
+            self.add_service(Box::new(video_service::new(
+                *display_service::PRIMARY_DISPLAY_IDX,
+            )));
+        }
+    }
+
     pub fn add_connection(&mut self, conn: ConnInner, noperms: &Vec<&'static str>) {
+        let primary_video_service_name =
+            video_service::get_service_name(*display_service::PRIMARY_DISPLAY_IDX);
         for s in self.services.values() {
-            if !noperms.contains(&s.name()) {
+            let name = s.name();
+            if Self::is_video_service_name(&name) && name != primary_video_service_name {
+                continue;
+            }
+            if !noperms.contains(&(&name as _)) {
                 s.on_subscribe(conn.clone());
             }
         }
@@ -308,8 +311,12 @@ impl Server {
         self.services.insert(name, service);
     }
 
+    pub fn contains(&self, name: &str) -> bool {
+        self.services.contains_key(name)
+    }
+
     pub fn subscribe(&mut self, name: &str, conn: ConnInner, sub: bool) {
-        if let Some(s) = self.services.get(&name) {
+        if let Some(s) = self.services.get(name) {
             if s.is_subed(conn.id()) == sub {
                 return;
             }
@@ -323,9 +330,49 @@ impl Server {
 
     // get a new unique id
     pub fn get_new_id(&mut self) -> i32 {
-        let new_id = self.id_count;
         self.id_count += 1;
-        new_id
+        self.id_count
+    }
+
+    pub fn set_video_service_opt(&self, display: Option<usize>, opt: &str, value: &str) {
+        for (k, v) in self.services.iter() {
+            if let Some(display) = display {
+                if k != &video_service::get_service_name(display) {
+                    continue;
+                }
+            }
+
+            if Self::is_video_service_name(k) {
+                v.set_option(opt, value);
+            }
+        }
+    }
+
+    fn capture_displays(
+        &mut self,
+        conn: ConnInner,
+        displays: &[usize],
+        include: bool,
+        exclude: bool,
+    ) {
+        let displays = displays
+            .iter()
+            .map(|d| video_service::get_service_name(*d))
+            .collect::<Vec<_>>();
+        let keys = self.services.keys().cloned().collect::<Vec<_>>();
+        for name in keys.iter() {
+            if Self::is_video_service_name(&name) {
+                if displays.contains(&name) {
+                    if include {
+                        self.subscribe(&name, conn.clone(), true);
+                    }
+                } else {
+                    if exclude {
+                        self.subscribe(&name, conn.clone(), false);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -385,31 +432,29 @@ pub async fn start_server(is_server: bool) {
         log::info!("XAUTHORITY={:?}", std::env::var("XAUTHORITY"));
     }
     #[cfg(feature = "hwcodec")]
-    {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            scrap::hwcodec::check_config_process();
-        })
-    }
+    scrap::hwcodec::hwcodec_new_check_process();
+    #[cfg(feature = "gpucodec")]
+    scrap::gpucodec::gpucodec_new_check_process();
+    #[cfg(windows)]
+    hbb_common::platform::windows::start_cpu_performance_monitor();
 
     if is_server {
+        crate::common::set_server_running(true);
         std::thread::spawn(move || {
             if let Err(err) = crate::ipc::start("") {
                 log::error!("Failed to start ipc: {}", err);
                 std::process::exit(-1);
             }
         });
-        #[cfg(windows)]
-        crate::platform::windows::bootstrap();
         input_service::fix_key_down_timeout_loop();
-        crate::hbbs_http::sync::start();
         #[cfg(target_os = "linux")]
         if crate::platform::current_is_wayland() {
             allow_err!(input_service::setup_uinput(0, 1920, 0, 1080).await);
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         tokio::spawn(async { sync_and_watch_config_dir().await });
+        #[cfg(target_os = "windows")]
+        crate::platform::try_kill_broker();
         crate::RendezvousMediator::start_all().await;
     } else {
         match crate::ipc::connect(1000, "").await {
@@ -451,17 +496,16 @@ pub async fn start_ipc_url_server() {
                     Ok(Some(data)) => match data {
                         #[cfg(feature = "flutter")]
                         Data::UrlLink(url) => {
-                            if let Some(stream) = crate::flutter::GLOBAL_EVENT_STREAM
-                                .read()
-                                .unwrap()
-                                .get(crate::flutter::APP_TYPE_MAIN)
-                            {
-                                let mut m = HashMap::new();
-                                m.insert("name", "on_url_scheme_received");
-                                m.insert("url", url.as_str());
-                                stream.add(serde_json::to_string(&m).unwrap());
-                            } else {
-                                log::warn!("No main window app found!");
+                            let mut m = HashMap::new();
+                            m.insert("name", "on_url_scheme_received");
+                            m.insert("url", url.as_str());
+                            let event = serde_json::to_string(&m).unwrap_or("".to_owned());
+                            match crate::flutter::push_global_event(
+                                crate::flutter::APP_TYPE_MAIN,
+                                event,
+                            ) {
+                                None => log::warn!("No main window app found!"),
+                                Some(..) => {}
                             }
                         }
                         _ => {
@@ -481,7 +525,7 @@ pub async fn start_ipc_url_server() {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn sync_and_watch_config_dir() {
     if crate::platform::is_root() {
         return;
@@ -498,7 +542,7 @@ async fn sync_and_watch_config_dir() {
     log::debug!("#tries of ipc service connection: {}", tries);
     use hbb_common::sleep;
     for i in 1..=tries {
-        sleep(i as f32 * 0.3).await;
+        sleep(i as f32 * CONFIG_SYNC_INTERVAL_SECS).await;
         match crate::ipc::connect(1000, "_service").await {
             Ok(mut conn) => {
                 if !synced {
@@ -508,15 +552,17 @@ async fn sync_and_watch_config_dir() {
                                 Data::SyncConfig(Some(configs)) => {
                                     let (config, config2) = *configs;
                                     let _chk = crate::ipc::CheckIfRestart::new();
-                                    if cfg0.0 != config {
-                                        cfg0.0 = config.clone();
-                                        Config::set(config);
-                                        log::info!("sync config from root");
-                                    }
-                                    if cfg0.1 != config2 {
-                                        cfg0.1 = config2.clone();
-                                        Config2::set(config2);
-                                        log::info!("sync config2 from root");
+                                    if !config.is_empty() {
+                                        if cfg0.0 != config {
+                                            cfg0.0 = config.clone();
+                                            Config::set(config);
+                                            log::info!("sync config from root");
+                                        }
+                                        if cfg0.1 != config2 {
+                                            cfg0.1 = config2.clone();
+                                            Config2::set(config2);
+                                            log::info!("sync config2 from root");
+                                        }
                                     }
                                     synced = true;
                                 }
@@ -527,7 +573,7 @@ async fn sync_and_watch_config_dir() {
                 }
 
                 loop {
-                    sleep(0.3).await;
+                    sleep(CONFIG_SYNC_INTERVAL_SECS).await;
                     let cfg = (Config::get(), Config2::get());
                     if cfg != cfg0 {
                         log::info!("config updated, sync to root");

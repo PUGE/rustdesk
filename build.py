@@ -13,10 +13,17 @@ import sys
 windows = platform.platform().startswith('Windows')
 osx = platform.platform().startswith(
     'Darwin') or platform.platform().startswith("macOS")
-hbb_name = 'RCPLine' + ('.exe' if windows else '')
+hbb_name = 'rustdesk' + ('.exe' if windows else '')
 exe_path = 'target/release/' + hbb_name
-flutter_win_target_dir = 'flutter/build/windows/runner/Release/'
+if windows:
+    flutter_build_dir = 'build/windows/x64/runner/Release/'
+elif osx:
+    flutter_build_dir = 'build/macos/Build/Products/Release/'
+else:
+    flutter_build_dir = 'build/linux/x64/release/bundle/'
+flutter_build_dir_2 = f'flutter/{flutter_build_dir}'
 skip_cargo = False
+
 
 def get_arch() -> str:
     custom_arch = os.environ.get("ARCH")
@@ -24,11 +31,13 @@ def get_arch() -> str:
         return "amd64"
     return custom_arch
 
+
 def system2(cmd):
     err = os.system(cmd)
     if err != 0:
         print(f"Error occurred when executing: {cmd}. Exiting.")
         sys.exit(-1)
+
 
 def get_version():
     with open("Cargo.toml", encoding="utf-8") as fh:
@@ -40,31 +49,45 @@ def get_version():
 
 def parse_rc_features(feature):
     available_features = {
-        'IddDriver': {
-            'zip_url': 'https://github.com/fufesou/RustDeskIddDriver/releases/download/v0.1/RustDeskIddDriver_x64.zip',
-            'checksum_url': 'https://github.com/fufesou/RustDeskIddDriver/releases/download/v0.1/checksum_md5',
-            'exclude': ['README.md', 'certmgr.exe', 'install_cert_runas_admin.bat'],
-        },
         'PrivacyMode': {
-            'zip_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.1'
-                       '/TempTopMostWindow_x64_pic_en.zip',
-            'checksum_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.1/checksum_md5',
+            'platform': ['windows'],
+            'zip_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.3'
+                       '/TempTopMostWindow_x64.zip',
+            'checksum_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.3/checksum_md5',
             'include': ['WindowInjection.dll'],
         }
     }
     apply_features = {}
     if not feature:
         feature = []
+
+    def platform_check(platforms):
+        if windows:
+            return 'windows' in platforms
+        elif osx:
+            return 'osx' in platforms
+        else:
+            return 'linux' in platforms
+
+    def get_all_features():
+        features = []
+        for (feat, feat_info) in available_features.items():
+            if platform_check(feat_info['platform']):
+                features.append(feat)
+        return features
+
     if isinstance(feature, str) and feature.upper() == 'ALL':
-        return available_features
+        return get_all_features()
     elif isinstance(feature, list):
-        # force add PrivacyMode
-        feature.append('PrivacyMode')
+        if windows:
+            # force add PrivacyMode
+            feature.append('PrivacyMode')
         for feat in feature:
             if isinstance(feat, str) and feat.upper() == 'ALL':
-                return available_features
+                return get_all_features()
             if feat in available_features:
-                apply_features[feat] = available_features[feat]
+                if platform_check(available_features[feat]['platform']):
+                    apply_features[feat] = available_features[feat]
             else:
                 print(f'Unrecognized feature {feat}')
         return apply_features
@@ -83,7 +106,7 @@ def make_parser():
         nargs='+',
         default='',
         help='Integrate features, windows only.'
-             'Available: IddDriver, PrivacyMode. Special value is "ALL" and empty "". Default is empty.')
+             'Available: PrivacyMode. Special value is "ALL" and empty "". Default is empty.')
     parser.add_argument('--flutter', action='store_true',
                         help='Build flutter package', default=False)
     parser.add_argument(
@@ -93,9 +116,19 @@ def make_parser():
             '' if windows or osx else ', need libva-dev, libvdpau-dev.')
     )
     parser.add_argument(
+        '--gpucodec',
+        action='store_true',
+        help='Enable feature gpucodec, only available on windows now.'
+    )
+    parser.add_argument(
         '--portable',
         action='store_true',
         help='Build windows portable'
+    )
+    parser.add_argument(
+        '--unix-file-copy-paste',
+        action='store_true',
+        help='Build with unix file copy paste feature'
     )
     parser.add_argument(
         '--flatpak',
@@ -146,8 +179,8 @@ def generate_build_script_for_docker():
             export VCPKG_ROOT=`pwd`/vcpkg
             git clone https://github.com/microsoft/vcpkg
             vcpkg/bootstrap-vcpkg.sh
-            vcpkg/vcpkg install libvpx libyuv opus
             popd
+            $VCPKG_ROOT/vcpkg install --x-install-root="$VCPKG_ROOT/installed"
             # build rustdesk
             ./build.py --flutter --hwcodec
         ''')
@@ -159,6 +192,7 @@ def download_extract_features(features, res_dir):
     import re
 
     proxy = ''
+
     def req(url):
         if not proxy:
             return url
@@ -170,9 +204,9 @@ def download_extract_features(features, res_dir):
 
     for (feat, feat_info) in features.items():
         includes = feat_info['include'] if 'include' in feat_info and feat_info['include'] else []
-        includes = [ re.compile(p) for p in includes ]
+        includes = [re.compile(p) for p in includes]
         excludes = feat_info['exclude'] if 'exclude' in feat_info and feat_info['exclude'] else []
-        excludes = [ re.compile(p) for p in excludes ]
+        excludes = [re.compile(p) for p in excludes]
 
         print(f'{feat} download begin')
         download_filename = feat_info['zip_url'].split('/')[-1]
@@ -211,14 +245,12 @@ def download_extract_features(features, res_dir):
                 print(f'{feat} extract end')
 
 
-def get_rc_features(args):
-    flutter = args.flutter
+def external_resources(flutter, args, res_dir):
     features = parse_rc_features(args.feature)
     if not features:
-        return []
+        return
 
     print(f'Build with features {list(features.keys())}')
-    res_dir = 'resources'
     if os.path.isdir(res_dir) and not os.path.islink(res_dir):
         shutil.rmtree(res_dir)
     elif os.path.exists(res_dir):
@@ -226,24 +258,21 @@ def get_rc_features(args):
     os.makedirs(res_dir, exist_ok=True)
     download_extract_features(features, res_dir)
     if flutter:
-        os.makedirs(flutter_win_target_dir, exist_ok=True)
+        os.makedirs(flutter_build_dir_2, exist_ok=True)
         for f in pathlib.Path(res_dir).iterdir():
             print(f'{f}')
             if f.is_file():
-                shutil.copy2(f, flutter_win_target_dir)
+                shutil.copy2(f, flutter_build_dir_2)
             else:
-                shutil.copytree(f, f'{flutter_win_target_dir}{f.stem}')
-        return []
-    else:
-        return ['with_rc']
+                shutil.copytree(f, f'{flutter_build_dir_2}{f.stem}')
 
 
 def get_features(args):
     features = ['inline'] if not args.flutter else []
-    if windows:
-        features.extend(get_rc_features(args))
     if args.hwcodec:
         features.append('hwcodec')
+    if args.gpucodec:
+        features.append('gpucodec')
     if args.flutter:
         features.append('flutter')
         features.append('flutter_texture_render')
@@ -251,6 +280,8 @@ def get_features(args):
         features.append('flatpak')
     if args.appimage:
         features.append('appimage')
+    if args.unix_file_copy_paste:
+        features.append('unix-file-copy-paste')
     print("features:", features)
     return features
 
@@ -262,9 +293,9 @@ def generate_control_file(version):
     content = """Package: rustdesk
 Version: %s
 Architecture: %s
-Maintainer: open-trade <info@rustdesk.com>
+Maintainer: rustdesk <info@rustdesk.com>
 Homepage: https://rustdesk.com
-Depends: libgtk-3-0, libxcb-randr0, libxdo3, libxfixes3, libxcb-shape0, libxcb-xfixes0, libasound2, libsystemd0, curl, libva-drm2, libva-x11-2, libvdpau1, libgstreamer-plugins-base1.0-0
+Depends: libgtk-3-0, libxcb-randr0, libxdo3, libxfixes3, libxcb-shape0, libxcb-xfixes0, libasound2, libsystemd0, curl, libva-drm2, libva-x11-2, libvdpau1, libgstreamer-plugins-base1.0-0, libpam0g, libappindicator3-1, gstreamer1.0-pipewire
 Description: A remote control software.
 
 """ % (version, get_arch())
@@ -290,15 +321,19 @@ def build_flutter_deb(version, features):
     system2('mkdir -p tmpdeb/etc/rustdesk/')
     system2('mkdir -p tmpdeb/etc/pam.d/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
+    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
+    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
     system2('mkdir -p tmpdeb/usr/share/applications/')
     system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
     system2('rm tmpdeb/usr/bin/rustdesk || true')
     system2(
-        'cp -r build/linux/x64/release/bundle/* tmpdeb/usr/lib/rustdesk/')
+        f'cp -r {flutter_build_dir}/* tmpdeb/usr/lib/rustdesk/')
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
     system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/rustdesk/files/rustdesk.png')
+        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/rustdesk.png')
+    system2(
+        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/rustdesk.svg')
     system2(
         'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/rustdesk.desktop')
     system2(
@@ -325,11 +360,14 @@ def build_flutter_deb(version, features):
     os.rename('rustdesk.deb', '../rustdesk-%s.deb' % version)
     os.chdir("..")
 
+
 def build_deb_from_folder(version, binary_folder):
     os.chdir('flutter')
     system2('mkdir -p tmpdeb/usr/bin/')
     system2('mkdir -p tmpdeb/usr/lib/rustdesk')
     system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
+    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
+    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
     system2('mkdir -p tmpdeb/usr/share/applications/')
     system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
     system2('rm tmpdeb/usr/bin/rustdesk || true')
@@ -338,7 +376,9 @@ def build_deb_from_folder(version, binary_folder):
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
     system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/rustdesk/files/rustdesk.png')
+        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/rustdesk.png')
+    system2(
+        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/rustdesk.svg')
     system2(
         'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/rustdesk.desktop')
     system2(
@@ -359,10 +399,12 @@ def build_deb_from_folder(version, binary_folder):
     os.rename('rustdesk.deb', '../rustdesk-%s.deb' % version)
     os.chdir("..")
 
+
 def build_flutter_dmg(version, features):
     if not skip_cargo:
         # set minimum osx build target, now is 10.14, which is the same as the flutter xcode project
-        system2(f'MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features {features} --lib --release')
+        system2(
+            f'MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features {features} --lib --release')
     # copy dylib
     system2(
         "cp target/release/liblibrustdesk.dylib target/release/librustdesk.dylib")
@@ -380,7 +422,7 @@ def build_flutter_arch_manjaro(version, features):
     ffi_bindgen_function_refactor()
     os.chdir('flutter')
     system2('flutter build linux --release')
-    system2('strip build/linux/x64/release/bundle/lib/librustdesk.so')
+    system2(f'strip {flutter_build_dir}/lib/librustdesk.so')
     os.chdir('../res')
     system2('HBB=`pwd`/.. FLUTTER=1 makepkg -f')
 
@@ -395,11 +437,11 @@ def build_flutter_windows(version, features):
     system2('flutter build windows --release')
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
-                 flutter_win_target_dir)
+                 flutter_build_dir_2)
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_win_target_dir} -o . -e ../../{flutter_win_target_dir}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
     os.chdir('../..')
     if os.path.exists('./rustdesk_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',
@@ -436,6 +478,8 @@ def main():
     if package:
         build_deb_from_folder(version, package)
         return
+    res_dir = 'resources'
+    external_resources(flutter, args, res_dir)
     if windows:
         # build virtual display dynamic library
         os.chdir('libs/virtual_display/dylib')
@@ -450,13 +494,19 @@ def main():
         system2('mv target/release/rustdesk.exe target/release/RustDesk.exe')
         pa = os.environ.get('P')
         if pa:
+            # https://certera.com/kb/tutorial-guide-for-safenet-authentication-client-for-code-signing/
             system2(
                 f'signtool sign /a /v /p {pa} /debug /f .\\cert.pfx /t http://timestamp.digicert.com  '
                 'target\\release\\rustdesk.exe')
         else:
             print('Not signed')
         system2(
-            f'cp -rf target/release/RustDesk.exe rustdesk-{version}-win7-install.exe')
+            f'cp -rf target/release/RustDesk.exe {res_dir}')
+        os.chdir('libs/portable')
+        system2('pip3 install -r requirements.txt')
+        system2(
+            f'python3 ./generate.py -f ../../{res_dir} -o . -e ../../{res_dir}/rustdesk-{version}-win7-install.exe')
+        system2('mv ../../{res_dir}/rustdesk-{version}-win7-install.exe ../..')
     elif os.path.isfile('/usr/bin/pacman'):
         # pacman -S -needed base-devel
         system2("sed -i 's/pkgver=.*/pkgver=%s/g' res/PKGBUILD" % version)
@@ -509,13 +559,6 @@ def main():
                     'cp libsciter.dylib target/release/bundle/osx/RustDesk.app/Contents/MacOS/')
                 # https://github.com/sindresorhus/create-dmg
                 system2('/bin/rm -rf *.dmg')
-                plist = "target/release/bundle/osx/RustDesk.app/Contents/Info.plist"
-                txt = open(plist).read()
-                with open(plist, "wt") as fh:
-                    fh.write(txt.replace("</dict>", """
-    <key>LSUIElement</key>
-    <string>1</string>
-    </dict>"""))
                 pa = os.environ.get('P')
                 if pa:
                     system2('''
@@ -528,7 +571,8 @@ def main():
     codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/RustDesk.app/Contents/MacOS/*
     codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/RustDesk.app
     '''.format(pa))
-                system2('create-dmg target/release/bundle/osx/RustDesk.app')
+                system2(
+                    'create-dmg "RustDesk %s.dmg" "target/release/bundle/osx/RustDesk.app"' % version)
                 os.rename('RustDesk %s.dmg' %
                           version, 'rustdesk-%s.dmg' % version)
                 if pa:
@@ -540,23 +584,27 @@ def main():
     #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./rustdesk-{1}.dmg
     codesign -s "Developer ID Application: {0}" --force --options runtime ./rustdesk-{1}.dmg
     # https://appstoreconnect.apple.com/access/api
-    # https://gregoryszorc.com/docs/apple-codesign/0.16.0/apple_codesign_rcodesign.html#notarizing-and-stapling
-    # p8 file is generated when you generate api key, download and put it under ~/.private_keys/
-    rcodesign notarize --api-issuer {2} --api-key {3} --staple ./rustdesk-{1}.dmg
+    # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_getting_started.html#apple-codesign-app-store-connect-api-key
+    # p8 file is generated when you generate api key (can download only once)
+    rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple rustdesk-{1}.dmg
     # verify:  spctl -a -t exec -v /Applications/RustDesk.app
-    '''.format(pa, version, os.environ.get('api-issuer'), os.environ.get('api-key')))
+    '''.format(pa, version))
                 else:
                     print('Not signed')
             else:
-                # buid deb package
+                # build deb package
                 system2(
                     'mv target/release/bundle/deb/rustdesk*.deb ./rustdesk.deb')
                 system2('dpkg-deb -R rustdesk.deb tmpdeb')
                 system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
+                system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
+                system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
                 system2(
                     'cp res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
                 system2(
-                    'cp res/128x128@2x.png tmpdeb/usr/share/rustdesk/files/rustdesk.png')
+                    'cp res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/rustdesk.png')
+                system2(
+                    'cp res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/rustdesk.svg')
                 system2(
                     'cp res/rustdesk.desktop tmpdeb/usr/share/applications/rustdesk.desktop')
                 system2(

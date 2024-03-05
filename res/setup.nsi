@@ -11,7 +11,7 @@
 ####################################################################
 # File Info
 
-!define PRODUCT_NAME "RCPLine"
+!define PRODUCT_NAME "RustDesk"
 !define PRODUCT_DESCRIPTION "Installer for ${PRODUCT_NAME}"
 !define COPYRIGHT "Copyright © 2021"
 !define VERSION "1.1.6"
@@ -40,12 +40,12 @@ InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
 ####################################################################
 # Pages
 
-!define MUI_ICON "tray-icon.ico"
+!define MUI_ICON "icon.ico"
 !define MUI_ABORTWARNING
 !define MUI_LANGDLL_ALLLANGUAGES
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "Create Desktop Shortcut"
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Create desktop shortcut"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateDesktopShortcut
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_NAME}.exe"
 

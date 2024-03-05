@@ -1,7 +1,7 @@
- #![cfg_attr(
-     all(not(debug_assertions), target_os = "windows"),
-     windows_subsystem = "windows"
- )]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 use librustdesk::*;
 
@@ -27,6 +27,10 @@ fn main() {
     if !common::global_init() {
         return;
     }
+    #[cfg(all(windows, not(feature = "inline")))]
+    unsafe {
+        winapi::um::shellscalingapi::SetProcessDpiAwareness(2);
+    }
     if let Some(args) = crate::core_main::core_main().as_mut() {
         ui::start(args);
     }
@@ -46,10 +50,10 @@ fn main() {
         -k, --key=[KEY] ''
        -s, --server=[] 'Start server'",
     );
-    let matches = App::new("RCPLine")
+    let matches = App::new("rustdesk")
         .version(crate::VERSION)
         .author("CarrieZ Studio<info@rustdesk.com>")
-        .about("PCBLi command line tool")
+        .about("RustDesk command line tool")
         .args_from_usage(&args)
         .get_matches();
     use hbb_common::{config::LocalConfig, env_logger::*};
